@@ -1,0 +1,79 @@
+name: Builder
+
+on:
+  push:
+    branches: ["master"]
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [16]
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        
+    - run: npm ci
+    - run: npm run build
+
+    - name: Get version from package.json
+      run: echo "PACKAGE_VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+
+    - name: Find latest release tag
+      id: find_latest_release
+      uses: actions/github-script@v4
+      with:
+        script: |
+          const { data: releases } = await github.repos.listReleases({
+            owner: context.repo.owner,
+            repo: context.repo.repo
+          });
+          const latestRelease = releases.find(release => release.tag_name.startsWith('v'));
+          let latestVersion = latestRelease ? latestRelease.tag_name.replace('v', '') : '0.0.0';
+          const versionParts = latestVersion.split('.');
+          let hasMinorVersion = versionParts.length === 4 && !isNaN(versionParts[3]);
+          if (hasMinorVersion) {
+            // Increment the minor version if it's less than 9
+            if (parseInt(versionParts[3]) < 9) {
+              versionParts[3] = parseInt(versionParts[3]) + 1;
+            } else {
+              // Reset minor version to 0
+              versionParts[2] = parseInt(versionParts[2]) + 1;
+              versionParts[3] = '0';
+            }
+          } else {
+            // Add a minor version if not present
+            versionParts.push('1');
+          }
+          const newVersion = `v${versionParts.join('.')}`;
+          core.setOutput('new_version', newVersion);
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.find_latest_release.outputs.new_version }}
+        release_name: ${{ steps.find_latest_release.outputs.new_version }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/gist-sync-api.js
+        asset_name: gist-sync-api.js
+        asset_content_type: application/javascript
