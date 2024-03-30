@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
 const writeFileAsync = promisify(fs.writeFile);
+const bodyParser = require('body-parser');
 require('dotenv').config();
 
 const app = express();
@@ -192,12 +193,12 @@ async function get_all_cookie(kevast_store) {
   _domain_list = JSON.parse(_domain_list);
 
   const cookie_object = {};
-  
+
   await Promise.all(_domain_list.map(async (domain) => {
     const ck = await get_cookie(domain, kevast_store);
     cookie_object[domain] = JSON.parse(ck);
   }));
-  
+
   await writeFileAsync('ck.json', JSON.stringify(cookie_object, null, 2));
   return cookie_object;
 }
@@ -251,6 +252,27 @@ app.get('/api/remove_cookie/:domain', async (req, res) => {
   }
 });
 
+app.use(bodyParser.json());
+app.post('/update_gist', (req, res) => {
+  const { content } = req.body;
+  if (content) {
+    const contentString = JSON.stringify(content);
+    fs.writeFile(local_store_file, contentString, (err) => {
+      if (err) {
+        // 发生错误，返回错误响应
+        console.error('文件保存错误:', err);
+        res.status(500).send('文件保存错误');
+      } else {
+        // 文件保存成功，返回成功响应
+        console.log('gist保存成功');
+        res.status(200).send('gist保存成功');
+      }
+    });
+  } else {
+    // 没有接收到内容，返回错误响应
+    res.status(400).send('No content received.');
+  }
+});
 
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
