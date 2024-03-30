@@ -80,3 +80,16 @@ jobs:
         asset_path: ./dist/gist-sync-api.js
         asset_name: gist-sync-api.js
         asset_content_type: application/javascript
+    
+    - name: List all releases
+      id: list_releases
+      uses: actions/github-script@v4
+      with:
+        script: |
+          const { data: releases } = await github.repos.listReleases({
+            owner: context.repo.owner,
+            repo: context.repo.repo
+          });
+          releases.forEach(release => {
+            console.log(`Release ${release.id}: ${release.name} (state: ${release.prerelease ? 'prerelease' : 'release'}))`);
+          });
