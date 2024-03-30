@@ -28,6 +28,11 @@ jobs:
     - name: Get version from package.json
       run: echo "PACKAGE_VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
 
+    - name: Add 'v' prefix to package version
+      run: |
+        echo "PACKAGE_VERSION=v${PACKAGE_VERSION}" >> $GITHUB_ENV
+        echo "PACKAGE_VERSION_WITH_V=${PACKAGE_VERSION}"
+
     - name: Find latest release tag
       id: find_latest_release
       uses: actions/github-script@v4
@@ -39,22 +44,20 @@ jobs:
           });
           const latestRelease = releases.find(release => release.tag_name.startsWith('v'));
           let latestVersion = latestRelease ? latestRelease.tag_name.replace('v', '') : '0.0.0';
-          const versionParts = latestVersion.split('.');
-          let hasMinorVersion = versionParts.length === 4 && !isNaN(versionParts[3]);
-          if (hasMinorVersion) {
-            // Increment the minor version if it's less than 9
-            if (parseInt(versionParts[3]) < 9) {
-              versionParts[3] = parseInt(versionParts[3]) + 1;
-            } else {
-              // Reset minor version to 0
-              versionParts[2] = parseInt(versionParts[2]) + 1;
-              versionParts[3] = '0';
-            }
+
+          // Use the PACKAGE_VERSION_WITH_V environment variable
+          const packageVersionWithV = process.env.PACKAGE_VERSION_WITH_V;
+          let newVersion = '';
+
+          if (packageVersionWithV > latestVersion) {
+            newVersion = packageVersionWithV;
           } else {
-            // Add a minor version if not present
-            versionParts.push('1');
+            let versionParts = latestVersion.split('.');
+            let patchVersion = parseInt(versionParts[2]) + 1;
+            versionParts[2] = patchVersion.toString();
+            newVersion = `v${versionParts.join('.')}`;
           }
-          const newVersion = `v${versionParts.join('.')}`;
+
           core.setOutput('new_version', newVersion);
 
     - name: Create Release
