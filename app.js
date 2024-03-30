@@ -4,14 +4,17 @@ const { KevastFile } = require('kevast-file');
 const { KevastGist } = require('kevast-gist');
 const { KevastEncrypt } = require('kevast-encrypt');
 const he = require('he');
-// const { readFileSync } = require('fs');
+const fs = require('fs');
+const path = require('path');
+const { promisify } = require('util');
+const writeFileAsync = promisify(fs.writeFile);
 require('dotenv').config();
 
 const app = express();
 const port = process.env.port || 3201;
 
 const requiredEnvVariables = ['token', 'password', 'gistid', 'filename'];
-const missingEnvVariables = requiredEnvVariables.filter((variable) => !process.env[variable]);
+let missingEnvVariables = requiredEnvVariables.filter((variable) => !process.env[variable]);
 if (missingEnvVariables.length > 0) {
   console.info("无.env环境变量，使用请求参数方式")
 }
@@ -19,6 +22,9 @@ if (missingEnvVariables.length > 0) {
 const keys = {
   DOMAIN_LIST_KEY: '__DOMAIN_LIST__'
 }
+
+// 本地存储加密ck
+const local_store_file = 'domain_gists.json'
 
 /**
  * Kevast实例化
@@ -29,15 +35,25 @@ const keys = {
  * @returns kevast_store
  */
 async function getFreshKevastInstance(token, password, gistid, filename) {
+  let fileStore = new KevastFile(local_store_file);
+  let kevast_store = new Kevast(fileStore);
+
   // 检测参数
-  if (!token || !password || !gistid || !filename) {
-    throw new Error('缺少必要的参数: token, password, gistid, filename');
+  if (!token || !gistid || !filename) {
+    console.info('无token, gistid, filename参数，本地调用')
+    let filePath = path.join(__dirname, local_store_file)
+    fs.access(filePath, fs.constants.F_OK, (err) => {
+      if (err) {
+        console.error(`请求失败，本地文件${local_store_file}不存在`);
+      }
+    });
+  } else {
+    console.info('有token, gistid, filename参数，gist服务调用')
+    kevast_store.add(new KevastGist(token, gistid, filename));
   }
-
-  const fileStore = new KevastFile('./domain_gists.json');
-  const kevast_store = new Kevast(fileStore);
-
-  kevast_store.add(new KevastGist(token, gistid, filename));
+  if (!password) {
+    console.error('缺少必要的参数: password');
+  }
   kevast_store.use(new KevastEncrypt(password));
   return kevast_store;
 }
@@ -47,10 +63,10 @@ async function getFreshKevastInstance(token, password, gistid, filename) {
  */
 app.use(async (req, res, next) => {
   try {
-    const token = req.headers['token'] || process.env.token;
-    const password = req.headers['password'] || process.env.password;
-    const gistid = req.headers['gistid'] || process.env.gistid;
-    const filename = req.headers['filename'] || process.env.filename;
+    let token = req.headers['token'] || process.env.token;
+    let password = req.headers['password'] || process.env.password;
+    let gistid = req.headers['gistid'] || process.env.gistid;
+    let filename = req.headers['filename'] || process.env.filename;
 
     req.kevast_store = await getFreshKevastInstance(token, password, gistid, filename);
     next();
@@ -166,6 +182,34 @@ async function remove(domain, kevast_store, domainList) {
   return newDomainList;
 }
 
+/**
+ * 获取所有cookie
+ * @param {object} kevast_store req.kevast_store
+ * @returns cookies
+ */
+async function get_all_cookie(kevast_store) {
+  let _domain_list = await get_domain_list(kevast_store);
+  _domain_list = JSON.parse(_domain_list);
+
+  const cookie_object = {};
+  
+  await Promise.all(_domain_list.map(async (domain) => {
+    const ck = await get_cookie(domain, kevast_store);
+    cookie_object[domain] = JSON.parse(ck);
+  }));
+  
+  await writeFileAsync('ck.json', JSON.stringify(cookie_object, null, 2));
+  return cookie_object;
+}
+
+app.get('/api/get_all_cookie', async (req, res) => {
+  try {
+    const result = await get_all_cookie(req.kevast_store);
+    res.json(result)
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+})
 
 app.get('/api/get_cookie/:domain', async (req, res) => {
   try {
