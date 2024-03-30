@@ -10,31 +10,34 @@ require('dotenv').config();
 const app = express();
 const port = process.env.port || 3201;
 
-const requiredEnvVariables = ['token', 'password', 'gistId', 'filename'];
+const requiredEnvVariables = ['token', 'password', 'gistid', 'filename'];
 const missingEnvVariables = requiredEnvVariables.filter((variable) => !process.env[variable]);
 if (missingEnvVariables.length > 0) {
-  console.error('缺少以下必要环境变量：', missingEnvVariables.join(', '));
-  console.info("请在同一目录下创建.env文件，编写'token', 'password', 'gistId', 'filename'环境变量");
-  process.exit(1);
+  console.info("无.env环境变量，使用请求参数方式")
 }
 
-const token = process.env.token;
-const password = process.env.password;
-const gistId = process.env.gistId;
-const filename = process.env.filename;
 const keys = {
   DOMAIN_LIST_KEY: '__DOMAIN_LIST__'
 }
 
 /**
  * Kevast实例化
+ * @param {string} token github_gist_token
+ * @param {string} password 加密密码
+ * @param {string} gistid gist的id
+ * @param {string} filename gist文件名
  * @returns kevast_store
  */
-async function getFreshKevastInstance() {
+async function getFreshKevastInstance(token, password, gistid, filename) {
+  // 检测参数
+  if (!token || !password || !gistid || !filename) {
+    throw new Error('缺少必要的参数: token, password, gistid, filename');
+  }
+
   const fileStore = new KevastFile('./domain_gists.json');
   const kevast_store = new Kevast(fileStore);
 
-  kevast_store.add(new KevastGist(token, gistId, filename));
+  kevast_store.add(new KevastGist(token, gistid, filename));
   kevast_store.use(new KevastEncrypt(password));
   return kevast_store;
 }
@@ -44,7 +47,12 @@ async function getFreshKevastInstance() {
  */
 app.use(async (req, res, next) => {
   try {
-    req.kevast_store = await getFreshKevastInstance();
+    const token = req.headers['token'] || process.env.token;
+    const password = req.headers['password'] || process.env.password;
+    const gistid = req.headers['gistid'] || process.env.gistid;
+    const filename = req.headers['filename'] || process.env.filename;
+
+    req.kevast_store = await getFreshKevastInstance(token, password, gistid, filename);
     next();
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -79,7 +87,7 @@ app.use(async (req, res, next) => {
  */
 async function get_cookie(domain, kevast_store) {
   const cookie = await kevast_store.get(domain);
-  
+
   return cookie;
 }
 
@@ -161,7 +169,7 @@ async function remove(domain, kevast_store, domainList) {
 
 app.get('/api/get_cookie/:domain', async (req, res) => {
   try {
-    const value = await get_cookie(domain=req.params.domain, kevast_store=req.kevast_store);
+    const value = await get_cookie(domain = req.params.domain, kevast_store = req.kevast_store);
     const json_data = JSON.parse(he.decode(value));
     res.json(json_data);
   } catch (error) {
@@ -201,6 +209,5 @@ app.get('/api/remove_cookie/:domain', async (req, res) => {
 
 
 app.listen(port, () => {
-  getFreshKevastInstance()
   console.log(`Server running at http://localhost:${port}`);
 });
