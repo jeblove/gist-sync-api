@@ -3,11 +3,12 @@ name: Builder
 on:
   push:
     branches: ["master"]
+  workflow_dispatch:
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    
+
     strategy:
       matrix:
         node-version: [16]
@@ -26,36 +27,48 @@ jobs:
     - run: npm run build
 
     - name: Get version from package.json
+      id: get_package_version
       run: echo "PACKAGE_VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
 
-    - name: Add 'v' prefix to package version
+    - name: Split Package Version
+      id: split_version
       run: |
-        echo "PACKAGE_VERSION=v${PACKAGE_VERSION}" >> $GITHUB_ENV
-        echo "PACKAGE_VERSION_WITH_V=${PACKAGE_VERSION}"
-
+        PACKAGE_MAJOR_MINOR_PATCH=$(echo ${{ env.PACKAGE_VERSION }} | cut -d'-' -f1)
+        echo "PACKAGE_MAJOR_MINOR_PATCH=$PACKAGE_MAJOR_MINOR_PATCH" >> $GITHUB_ENV
+        
     - name: Find latest release tag
       id: find_latest_release
       uses: actions/github-script@v4
       with:
         script: |
+          const packageMajorMinorPatch = process.env.PACKAGE_MAJOR_MINOR_PATCH.replace('v', '');
           const { data: releases } = await github.repos.listReleases({
             owner: context.repo.owner,
             repo: context.repo.repo
           });
-          const latestRelease = releases.find(release => release.tag_name.startsWith('v'));
-          let latestVersion = latestRelease ? latestRelease.tag_name.replace('v', '') : '0.0.0';
+          const latestRelease = releases.find(release => 
+            release.tag_name.startsWith('v') && 
+            release.tag_name.replace('v', '').split('-')[0] === packageMajorMinorPatch
+          );
+          let latestVersionWithoutPrefix, newVersion;
 
-          // Use the PACKAGE_VERSION_WITH_V environment variable
-          const packageVersionWithV = process.env.PACKAGE_VERSION_WITH_V;
-          let newVersion = '';
+          if (latestRelease) {
+            latestVersionWithoutPrefix = latestRelease.tag_name.replace('v', '').split('-');
+            let latestMajorMinorPatch = latestVersionWithoutPrefix[0];
+            let latestSuffix = latestVersionWithoutPrefix.length > 1 ? latestVersionWithoutPrefix[1] : null;
 
-          if (packageVersionWithV > latestVersion) {
-            newVersion = packageVersionWithV;
+            // Compare versions
+            if (latestMajorMinorPatch !== packageMajorMinorPatch) {
+              // If major/minor/patch differs, use package version directly
+              newVersion = `v${process.env.PACKAGE_VERSION}`;
+            } else {
+              // Increment suffix when major/minor/patch is the same
+              let nextSuffix = parseInt(latestSuffix || 0) + 1;
+              newVersion = `v${latestMajorMinorPatch}-${nextSuffix}`;
+            }
           } else {
-            let versionParts = latestVersion.split('.');
-            let patchVersion = parseInt(versionParts[2]) + 1;
-            versionParts[2] = patchVersion.toString();
-            newVersion = `v${versionParts.join('.')}`;
+            // If there's no release yet or major/minor/patch differs, use package version directly
+            newVersion = `v${packageMajorMinorPatch}`;
           }
 
           core.setOutput('new_version', newVersion);
@@ -71,25 +84,38 @@ jobs:
         draft: false
         prerelease: false
 
+    - name: Get project name
+      id: get_project_name
+      run: |
+        PROJECT_NAME=$(node -p "require('./package.json').name")
+        echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
+
     - name: Upload Release Asset
+      id: upload_asset
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/gist-sync-api.js
-        asset_name: gist-sync-api.js
+        asset_path: ./dist/${{ env.PROJECT_NAME }}.js
+        asset_name: ${{ env.PROJECT_NAME }}.js
         asset_content_type: application/javascript
-    
-    - name: List all releases
-      id: list_releases
-      uses: actions/github-script@v4
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v1
       with:
-        script: |
-          const { data: releases } = await github.repos.listReleases({
-            owner: context.repo.owner,
-            repo: context.repo.repo
-          });
-          releases.forEach(release => {
-            console.log(`Release ${release.id}: ${release.name} (state: ${release.prerelease ? 'prerelease' : 'release'}))`);
-          });
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+    - name: Prepare Docker Tag
+      id: prepare_docker_tag
+      run: echo "DOCKER_TAG=$(echo ${{ steps.find_latest_release.outputs.new_version }} | sed 's/^v//')" >> $GITHUB_ENV
+
+    - name: Build Docker Image
+      id: build-image
+      uses: docker/build-push-action@v2
+      with:
+        context: .
+        push: true
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.PROJECT_NAME }}:${{ env.DOCKER_TAG }}
+        labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
