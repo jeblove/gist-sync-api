@@ -12,7 +12,7 @@ const bodyParser = require('body-parser');
 require('dotenv').config();
 
 const app = express();
-const port = process.env.port || 3201;
+const port = process.env.port || 9300;
 
 const requiredEnvVariables = ['token', 'password', 'gistid', 'filename'];
 let missingEnvVariables = requiredEnvVariables.filter((variable) => !process.env[variable]);
@@ -199,7 +199,8 @@ async function get_all_cookie(kevast_store) {
     cookie_object[domain] = JSON.parse(ck);
   }));
 
-  await writeFileAsync('ck.json', JSON.stringify(cookie_object, null, 2));
+  // 明文保存ck.json
+  // await writeFileAsync('ck.json', JSON.stringify(cookie_object, null, 2));
   return cookie_object;
 }
 
@@ -212,9 +213,11 @@ app.get('/api/get_all_cookie', async (req, res) => {
   }
 })
 
-app.get('/api/get_cookie/:domain', async (req, res) => {
+app.get('/api/get_cookie', async (req, res) => {
   try {
-    const value = await get_cookie(domain = req.params.domain, kevast_store = req.kevast_store);
+    const domain = req.query.domain;
+
+    const value = await get_cookie(domain, req.kevast_store);
     const json_data = JSON.parse(he.decode(value));
     res.json(json_data);
   } catch (error) {
@@ -228,7 +231,12 @@ app.get('/api/get_domain_list', async (req, res) => {
     const json_data = JSON.parse(he.decode(value));
     res.json(json_data);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    if (error instanceof TypeError) {
+      res.status(404).json({ message: "未能获取gists文件" });
+    } else {
+      res.status(500).json({ message: error.message });
+    }
+
   }
 });
 
@@ -253,7 +261,7 @@ app.get('/api/remove_cookie/:domain', async (req, res) => {
 });
 
 app.use(bodyParser.json());
-app.post('/update_gist', (req, res) => {
+app.post('/api/update_gist', (req, res) => {
   const { content } = req.body;
   if (content) {
     const contentString = JSON.stringify(content);

@@ -22,7 +22,7 @@ npm install
 - password: 加密密钥，尽量复杂
 - gistid: gist的id，创建后可看地址
 - filename: gist的name(desc)
-- port: 端口[可选]
+- port: 端口[可选]，默认9300
 
 
 #### 1. 环境变量
@@ -52,8 +52,36 @@ npm start
 
 ## API
 
-*待编辑*
+```
+/api/get_all_cookie
+获取所有cookie
+get
 
+/api/get_cookie?domain=tes.com
+获取指定域名的cookie
+get
+
+/api/get_domain_list
+获取域名列表
+get
+
+# 未测试
+/api/set_cookie/:cookies_list
+设置站点cookie
+cookies_list: json格式{cookie列表}
+get
+
+/api/remove_cookie/:domain
+删除指定域名cookie
+get
+
+/api/update_gist
+推送gist文件内容
+content: json格式
+post
+```
+
+*待编辑*
 
 
 ## TODO
